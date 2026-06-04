@@ -110,6 +110,7 @@
 
 #include "feature/adb_root.c"
 #include "feature/kernel_umount.c"
+#include "feature/mem_spoof.c"
 #include "feature/selinux_hide.c"
 #include "feature/sucompat.c"
 #include "feature/sulog.c"
