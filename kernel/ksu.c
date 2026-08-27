@@ -116,6 +116,8 @@
 #include "feature/selinux_hide.c"
 #include "feature/sucompat.c"
 #include "feature/sulog.c"
+#include "feature/uhook.c"
+
 #include "runtime/ksud.c"
 
 #include "sulog/event.c"
@@ -237,6 +239,7 @@ static int __init kernelsu_init(void)
 	ksu_mount_hide_init(); // so the feature is registered
 
 	ksu_ptctl_init();
+	ksu_uhook_init();
 
 	ksu_selinux_hide_init(); // so the feature is registered
 
