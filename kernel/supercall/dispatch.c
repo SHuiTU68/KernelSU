@@ -885,6 +885,19 @@ static int do_set_spoof_mem(void __user *arg)
     return ksu_set_spoof_mem(cmd.total_ram_bytes, cmd.cma_total_bytes);
 }
 
+static int do_ptctl(void __user *arg)
+{
+    struct ksu_ptctl_cmd cmd;
+    int ret;
+
+    if (copy_from_user(&cmd, arg, sizeof(cmd)))
+        return -EFAULT;
+    ret = ksu_ptctl(&cmd);
+    if (copy_to_user(arg, &cmd, sizeof(cmd)))
+        return -EFAULT;
+    return ret;
+}
+
 // IOCTL handlers mapping table
 static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
 	{ .cmd = KSU_IOCTL_GRANT_ROOT, .name = "GRANT_ROOT", .handler = do_grant_root, .perm_check = allowed_for_su },
@@ -914,6 +927,7 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
 	{ .cmd = KSU_IOCTL_SET_SPOOF_VERSION, .name = "SET_SPOOF_VERSION", .handler = do_set_spoof_version, .perm_check = only_root },
 	{ .cmd = KSU_IOCTL_SET_SPOOF_CPU, .name = "SET_SPOOF_CPU", .handler = do_set_spoof_cpu, .perm_check = only_root },
 	{ .cmd = KSU_IOCTL_SET_SPOOF_MEM, .name = "SET_SPOOF_MEM", .handler = do_set_spoof_mem, .perm_check = only_root },
+	{ .cmd = KSU_IOCTL_PTCTL, .name = "PTCTL", .handler = do_ptctl, .perm_check = only_root },
 	{ .cmd = 0, .name = NULL, .handler = NULL, .perm_check = NULL } // Sentinel
 };
 

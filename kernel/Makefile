@@ -8,6 +8,9 @@ CFLAGS_ksu.o += -I$(objtree)/security/selinux
 KDIR := $(KDIR)
 MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
+# KernelSU headers: keep upstream-style includes working ("klog.h", "uapi/supercall.h")
+CFLAGS_ksu.o += -I$(MDIR)/include
+
 $(info -- KDIR: $(KDIR))
 $(info -- MDIR: $(MDIR))
 

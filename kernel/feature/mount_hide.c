@@ -25,7 +25,7 @@
 #include "downstream/vmap_patch.h" // ksu_write_to_readonly_slot
 #include "policy/allowlist.h"
 #include "policy/feature.h"
-#include "include/klog.h" // IWYU pragma: keep
+#include "klog.h" // IWYU pragma: keep
 
 /*
  * Mount-view hiding.

@@ -112,6 +112,7 @@
 #include "feature/kernel_umount.c"
 #include "feature/mem_spoof.c"
 #include "feature/mount_hide.c"
+#include "feature/ptctl.c"
 #include "feature/selinux_hide.c"
 #include "feature/sucompat.c"
 #include "feature/sulog.c"
@@ -234,6 +235,8 @@ static int __init kernelsu_init(void)
 	ksu_kernel_umount_init(); // so the feature is registered
 
 	ksu_mount_hide_init(); // so the feature is registered
+
+	ksu_ptctl_init();
 
 	ksu_selinux_hide_init(); // so the feature is registered
 

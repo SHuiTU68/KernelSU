@@ -199,4 +199,76 @@ static const __u32 KSU_IOCTL_SET_SPOOF_VERSION = _IOC(_IOC_WRITE, 'K', 42, 0);
 static const __u32 KSU_IOCTL_SET_SPOOF_CPU = _IOC(_IOC_WRITE, 'K', 43, 0);
 static const __u32 KSU_IOCTL_SET_SPOOF_MEM = _IOC(_IOC_WRITE, 'K', 44, 0);
 
+/* i386 aligns __u64 to 4 bytes while every 64-bit arch aligns it to 8, and the
+ * driver points .compat_ioctl at the same handler, so every 64-bit field in
+ * these structs is force-aligned to keep one layout for both. */
+#ifndef __aligned_s64
+#define __aligned_s64 __s64 __attribute__((aligned(8)))
+#endif
+
+/* ---- ptctl: general process control / debug primitives (root only) ----
+ * One op-dispatched ioctl so many operations ship in a single kernel build.
+ * Kernel-unique capabilities userspace root cannot do: block another process's
+ * signals, and read/write/inspect an arbitrary task without ptrace (invisible to
+ * self-ptrace anti-debug + no TracerPid). */
+enum ksu_ptctl_op {
+    KSU_PTCTL_PEEK          = 1,  /* read  task mem: pid, addr, len(<=64K), uptr(out) -> ret=bytes */
+    KSU_PTCTL_POKE          = 2,  /* write task mem: pid, addr, len(<=64K), uptr(in)  -> ret=bytes */
+    /* GETREGS/SETREGS transfer exactly the USER register view -- struct
+     * user_pt_regs (272 B) on arm64, struct pt_regs (168 B) on x86_64 -- never
+     * the kernel-private tail of struct pt_regs. Pass len = 0 for "the whole
+     * user view"; any other value must match that size exactly or you get
+     * -EINVAL. SETREGS sanitises the incoming frame the way PTRACE_SETREGSET
+     * does (arm64 valid_user_regs; x86_64 pins cs/ss/orig_ax and masks eflags),
+     * refuses the calling thread itself, and refuses a target that is not
+     * off-CPU (-EBUSY) because a running task's frame is rewritten by the next
+     * kernel entry anyway. A thread parked by HWBP_WAIT always qualifies. */
+    KSU_PTCTL_GETREGS       = 3,  /* read user regs of tid: pid, uptr(out), len=0  -> ret=bytes */
+    KSU_PTCTL_SETREGS       = 4,  /* write user regs of tid: pid, uptr(in), len=0  -> ret=bytes */
+    KSU_PTCTL_INFO          = 5,  /* query task: pid -> arg1=tracer_pid arg2=tgid ret=1 if exists */
+    /* Guards the whole thread group of `pid` (a pid or a tid) against signals
+     * that would terminate it and that are INJECTED by another task through
+     * do_send_sig_info() -- kill(2), tgkill(2), rt_sigqueueinfo(2),
+     * pidfd_send_signal(2), cgroup.kill, the OOM killer. It cannot stop a
+     * synchronous fault (a real SIGSEGV/SIGBUS/SIGILL/SIGFPE never enters that
+     * path), exec's zap_other_threads(), seccomp's do_exit(), or the OOM
+     * reaper. arg2 returns the tgid actually guarded. -ENOSYS if the kprobe
+     * could not be installed. */
+    KSU_PTCTL_KILLGUARD     = 6,  /* protect a tgid from lethal signals: pid, arg1(1=add,0=del) */
+    KSU_PTCTL_SIGSEND       = 7,  /* send signal arg1 (1.._NSIG-1) to pid; 0 is rejected, use INFO */
+    KSU_PTCTL_DETACH_TRACER = 8,  /* force-detach pid from its ptracer (experimental) */
+    /* --- hold-breakpoint: a kernel HW breakpoint that PAUSES the hitting thread
+     * so peek/poke/regs can inspect+step obfuscated code, then release. No ptrace. */
+    KSU_PTCTL_HWBP_SET      = 9,  /* pid=tgid, addr (4-byte aligned) -> arm exec HW bp on all its threads */
+    /* On a hit, uptr receives the same user register view as GETREGS and len
+     * follows the same rule (0, or exactly that size). WAIT returns only once
+     * the hitting thread has genuinely parked, so the SETREGS/POKE that
+     * follows is guaranteed to find it off-CPU.
+     * Caveat: the park is an interruptible sleep, so a signal delivered to the
+     * held thread (an app's own timer or GC signal will do it) ends the hold
+     * early and indistinguishably from a RELEASE. Re-arm rather than assume
+     * the thread is still parked after a long inspection. */
+    KSU_PTCTL_HWBP_WAIT     = 10, /* block up to arg1 ms; on hit: uptr<-user regs, arg2=tid, ret=1; 0=timeout */
+    KSU_PTCTL_HWBP_RELEASE  = 11, /* resume the currently-held thread; -ENOENT if none is held */
+    KSU_PTCTL_HWBP_CLEAR    = 12, /* remove the breakpoint (and release any held thread) */
+};
+
+struct ksu_ptctl_cmd {
+    __u32 op;              /* Input: enum ksu_ptctl_op */
+    __s32 pid;             /* Input: target pid or tid */
+    __aligned_u64 addr;    /* Input: target address (peek/poke) */
+    __aligned_u64 len;     /* Input: byte length (peek/poke/regs) */
+    __aligned_u64 uptr;    /* Input/Output: userspace buffer */
+    __aligned_u64 arg1;    /* Input: op-specific */
+    __aligned_u64 arg2;    /* Output: op-specific */
+    __aligned_s64 ret;     /* Output: op-specific result */
+};
+
+/* NOTE: the GETREGS/SETREGS/HWBP_WAIT wire format changed from
+ * sizeof(struct pt_regs) to the user-visible register view. struct
+ * ksu_ptctl_cmd itself is unchanged, so the ioctl number is unchanged and an
+ * out-of-date caller is NOT rejected by the dispatcher -- it will simply get
+ * -EINVAL from the length check. Rebuild every consumer from this header. */
+static const __u32 KSU_IOCTL_PTCTL = _IOWR('K', 50, struct ksu_ptctl_cmd);
+
 #endif
