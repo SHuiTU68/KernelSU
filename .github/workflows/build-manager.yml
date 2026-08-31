@@ -156,10 +156,10 @@ jobs:
         if: ${{ ( github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' )) || github.ref_type == 'tag' }}
         run: |
             {
-              echo KEYSTORE_PASSWORD='password'
-              echo KEY_ALIAS='alias'
-              echo KEY_PASSWORD='password'
-              echo KEYSTORE_FILE='dummy.keystore'
+              echo KEYSTORE_PASSWORD='3n9dE7QnUNH9MjbdS6VpGc08'
+              echo KEY_ALIAS='kernelsu'
+              echo KEY_PASSWORD='3n9dE7QnUNH9MjbdS6VpGc08'
+              echo KEYSTORE_FILE='kernelsu.jks'
             } >> gradle.properties
 
       - name: Write PR key
