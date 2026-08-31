@@ -341,10 +341,24 @@ out:
 
 static DEFINE_MUTEX(throne_tracker_mutex);
 
+/*
+ * Upper bound on the pre-flight waits below.
+ *
+ * Both waits run with throne_tracker_mutex held. If either condition never
+ * clears - a packages.list.tmp left behind by an interrupted boot, or /data not
+ * decrypted yet so packages.list is not there at all - an unbounded loop keeps
+ * the mutex forever. That is strictly worse than bailing out: every later
+ * track_throne() call spawns another kthread that then blocks on this mutex for
+ * the rest of the uptime, so the manager can never be crowned. Giving up frees
+ * the lock and lets the next packages.list rename drive a fresh attempt.
+ */
+#define KSU_THRONE_TRACKER_MAX_RETRIES 500 // 500 * 20ms = ~10s
+
 static int throne_tracker_thread(void *data)
 {
 	// now de-void it here
 	bool prune_only = (bool)data;
+	int retries = 0;
 
 	pr_info("throne_tracker: pid: %d started\n", current->pid);
 
@@ -358,7 +372,12 @@ test_tmp:
 		pr_info("throne_tracker: rename not finished! retry!\n");
 
 	msleep(20); // yield
-	goto test_tmp;
+	if (++retries < KSU_THRONE_TRACKER_MAX_RETRIES)
+		goto test_tmp;
+
+	pr_err("throne_tracker: %s still present after %d retries, giving up\n",
+	       "/data/system/packages.list.tmp", retries);
+	return 0;
 
 test_list:
 	if (is_file_stable(SYSTEM_PACKAGES_LIST_PATH))
@@ -368,7 +387,12 @@ test_list:
 		pr_info("throne_tracker: rename not finished! retry!\n");
 
 	msleep(20); // yield
-	goto test_list;	
+	if (++retries < KSU_THRONE_TRACKER_MAX_RETRIES)
+		goto test_list;
+
+	pr_err("throne_tracker: %s never became stable after %d retries, giving up\n",
+	       SYSTEM_PACKAGES_LIST_PATH, retries);
+	return 0;
 
 start_tt:
 	// lessen that window where user opens manager right away, yet its not crowned
