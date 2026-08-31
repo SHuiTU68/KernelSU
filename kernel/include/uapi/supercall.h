@@ -171,4 +171,230 @@ struct ksu_get_sulog_fd_cmd {
 #define KSU_IOCTL_GET_SULOG_FD _IOW('K', 20, struct ksu_get_sulog_fd_cmd)
 #define KSU_IOCTL_DISABLE_ESCAPE_TO_ROOT _IO('K', 21)
 
+/* ---- merged from upstream (JingMatrix): spoof / ptctl / uhook ----
+ * Kept in the #define form used by the rest of this header: the IOCTL
+ * table in supercall/dispatch.c is a static initialiser and several ops
+ * are used as switch-case labels, neither of which accepts a
+ * `static const __u32` in C.
+ */
+
+struct ksu_set_spoof_version_cmd {
+    __u8 release[65]; /* Input: e.g., "5.10.115-android12-9-g00000000" */
+    __u8 version[65]; /* Input: e.g., "#1 SMP PREEMPT Thu Jan 1 00:00:00 UTC 2026" */
+};
+
+struct ksu_set_spoof_cpu_cmd {
+    __u32 cpu_index;  /* Target processor core index */
+    __u32 midr;       /* Main ID Register payload */
+    __u32 bogomips;   /* BogoMIPS performance timing metric */
+    __u64 hwcap;      /* Main ELF Hardware Capabilities mask */
+    __u64 hwcap2;     /* Auxiliary ELF Hardware Capabilities mask */
+};
+
+struct ksu_set_spoof_mem_cmd {
+    __u64 total_ram_bytes; /* Target total memory size in bytes (e.g. 8GB) */
+    __u64 cma_total_bytes; /* Target total CMA size in bytes (e.g. 512MB), can be 0 */
+};
+
+#define KSU_IOCTL_SET_SPOOF_VERSION _IOC(_IOC_WRITE, 'K', 42, 0)
+#define KSU_IOCTL_SET_SPOOF_CPU _IOC(_IOC_WRITE, 'K', 43, 0)
+#define KSU_IOCTL_SET_SPOOF_MEM _IOC(_IOC_WRITE, 'K', 44, 0)
+
+/* i386 aligns __u64 to 4 bytes while every 64-bit arch aligns it to 8, and the
+ * driver points .compat_ioctl at the same handler, so every 64-bit field in
+ * these structs is force-aligned to keep one layout for both. */
+#ifndef __aligned_s64
+#define __aligned_s64 __s64 __attribute__((aligned(8)))
+#endif
+
+/* ---- ptctl: general process control / debug primitives (root only) ----
+ * One op-dispatched ioctl so many operations ship in a single kernel build.
+ * Kernel-unique capabilities userspace root cannot do: block another process's
+ * signals, and read/write/inspect an arbitrary task without ptrace (invisible to
+ * self-ptrace anti-debug + no TracerPid). */
+
+enum ksu_ptctl_op {
+    KSU_PTCTL_PEEK          = 1,  /* read  task mem: pid, addr, len(<=64K), uptr(out) -> ret=bytes */
+    KSU_PTCTL_POKE          = 2,  /* write task mem: pid, addr, len(<=64K), uptr(in)  -> ret=bytes */
+    /* GETREGS/SETREGS transfer exactly the USER register view -- struct
+     * user_pt_regs (272 B) on arm64, struct pt_regs (168 B) on x86_64 -- never
+     * the kernel-private tail of struct pt_regs. Pass len = 0 for "the whole
+     * user view"; any other value must match that size exactly or you get
+     * -EINVAL. SETREGS sanitises the incoming frame the way PTRACE_SETREGSET
+     * does (arm64 valid_user_regs; x86_64 pins cs/ss/orig_ax and masks eflags),
+     * refuses the calling thread itself, and refuses a target that is not
+     * off-CPU (-EBUSY) because a running task's frame is rewritten by the next
+     * kernel entry anyway. A thread parked by HWBP_WAIT always qualifies. */
+    KSU_PTCTL_GETREGS       = 3,  /* read user regs of tid: pid, uptr(out), len=0  -> ret=bytes */
+    KSU_PTCTL_SETREGS       = 4,  /* write user regs of tid: pid, uptr(in), len=0  -> ret=bytes */
+    KSU_PTCTL_INFO          = 5,  /* query task: pid -> arg1=tracer_pid arg2=tgid ret=1 if exists */
+    /* Guards the whole thread group of `pid` (a pid or a tid) against signals
+     * that would terminate it and that are INJECTED by another task through
+     * do_send_sig_info() -- kill(2), tgkill(2), rt_sigqueueinfo(2),
+     * pidfd_send_signal(2), cgroup.kill, the OOM killer. It cannot stop a
+     * synchronous fault (a real SIGSEGV/SIGBUS/SIGILL/SIGFPE never enters that
+     * path), exec's zap_other_threads(), seccomp's do_exit(), or the OOM
+     * reaper. arg2 returns the tgid actually guarded. -ENOSYS if the kprobe
+     * could not be installed. */
+    KSU_PTCTL_KILLGUARD     = 6,  /* protect a tgid from lethal signals: pid, arg1(1=add,0=del) */
+    KSU_PTCTL_SIGSEND       = 7,  /* send signal arg1 (1.._NSIG-1) to pid; 0 is rejected, use INFO */
+    KSU_PTCTL_DETACH_TRACER = 8,  /* force-detach pid from its ptracer (experimental) */
+    /* --- hold-breakpoint: a kernel HW breakpoint that PAUSES the hitting thread
+     * so peek/poke/regs can inspect+step obfuscated code, then release. No ptrace. */
+    KSU_PTCTL_HWBP_SET      = 9,  /* pid=tgid, addr (4-byte aligned) -> arm exec HW bp on all its threads */
+    /* On a hit, uptr receives the same user register view as GETREGS and len
+     * follows the same rule (0, or exactly that size). WAIT returns only once
+     * the hitting thread has genuinely parked, so the SETREGS/POKE that
+     * follows is guaranteed to find it off-CPU.
+     * Caveat: the park is an interruptible sleep, so a signal delivered to the
+     * held thread (an app's own timer or GC signal will do it) ends the hold
+     * early and indistinguishably from a RELEASE. Re-arm rather than assume
+     * the thread is still parked after a long inspection. */
+    KSU_PTCTL_HWBP_WAIT     = 10, /* block up to arg1 ms; on hit: uptr<-user regs, arg2=tid, ret=1; 0=timeout */
+    KSU_PTCTL_HWBP_RELEASE  = 11, /* resume the currently-held thread; -ENOENT if none is held */
+    KSU_PTCTL_HWBP_CLEAR    = 12, /* remove the breakpoint (and release any held thread) */
+};
+
+struct ksu_ptctl_cmd {
+    __u32 op;              /* Input: enum ksu_ptctl_op */
+    __s32 pid;             /* Input: target pid or tid */
+    __aligned_u64 addr;    /* Input: target address (peek/poke) */
+    __aligned_u64 len;     /* Input: byte length (peek/poke/regs) */
+    __aligned_u64 uptr;    /* Input/Output: userspace buffer */
+    __aligned_u64 arg1;    /* Input: op-specific */
+    __aligned_u64 arg2;    /* Output: op-specific */
+    __aligned_s64 ret;     /* Output: op-specific result */
+};
+
+/* NOTE: the GETREGS/SETREGS/HWBP_WAIT wire format changed from
+ * sizeof(struct pt_regs) to the user-visible register view. struct
+ * ksu_ptctl_cmd itself is unchanged, so the ioctl number is unchanged and an
+ * out-of-date caller is NOT rejected by the dispatcher -- it will simply get
+ * -EINVAL from the length check. Rebuild every consumer from this header. */
+#define KSU_IOCTL_PTCTL _IOWR('K', 50, struct ksu_ptctl_cmd)
+
+/* ---------------------------------------------------------------------------
+ * uhook - general kernel-mediated userspace instrumentation via uprobes.
+ *
+ * A hook is keyed by (file inode, file-offset), so it applies to every thread
+ * and process that maps the file (subject to filter_tgid) and is immune to
+ * ASLR. On each hit an optional in-kernel condition is evaluated and one action
+ * is applied. No ptrace and no injected library, so TracerPid stays 0 -- but a
+ * uprobe DOES patch a BRK into a private COW copy of the target's text, so a
+ * checksum the target computes over its own mapping sees it, and once a probe
+ * fires a `[uprobes]` line appears in /proc/<pid>/maps. Only a checksum of the
+ * file on disk is unaffected. This is the persistent/automatic counterpart to
+ * the interactive HWBP-hold in PTCTL.
+ *
+ * A hook = where (entry or return site) + when (condition) + what (action),
+ * with an optional register capture drained via KSU_UHOOK_READ. Register indices
+ * on arm64 are 0..30 = x0..x30, 31 = sp, 32 = pc, 33 = pstate; on x86_64 they are
+ * 0 = ax (return value), 1..14 = bx,cx,dx,si,di,bp,r8..r15, 31 = sp, 32 = ip,
+ * 33 = flags -- so SETREG index 0 forges a return value on either arch.
+ */
+enum ksu_uhook_op {
+    KSU_UHOOK_ADD   = 1, /* install a hook -> ret = hook id (>= 0) */
+    KSU_UHOOK_DEL   = 2, /* remove hook `id` */
+    KSU_UHOOK_CLEAR = 3, /* remove every hook */
+    KSU_UHOOK_LIST  = 4, /* ret = number of active hooks */
+    KSU_UHOOK_READ  = 5, /* drain the capture ring into uptr(len); ret = bytes, arg1 = records */
+};
+
+enum ksu_uhook_site {
+    KSU_UHOOK_ON_ENTRY = 0, /* fire when the probed instruction is reached */
+    KSU_UHOOK_ON_RET   = 1, /* fire when the function returns (uretprobe) */
+};
+
+/* Site restrictions are ENFORCED at ADD time, because the uprobe core discards
+ * a handler-set pc at an entry site (the probed instruction is single-stepped
+ * out of line afterwards and pc is reset to probed+len; at a simulated arm64
+ * branch the corrupted pc is used as the branch base, which is worse). Anything
+ * that writes pc is therefore accepted only at KSU_UHOOK_ON_RET, where
+ * handle_trampoline() sets pc before running the ret handlers and nothing
+ * touches it afterwards. */
+enum ksu_uhook_action {
+    KSU_UHOOK_OBSERVE   = 0, /* record registers into the capture ring (no side effect) */
+    KSU_UHOOK_SETREG    = 1, /* regs[act_reg] = act_val; index 0 at ON_RET forges the return value.
+                              * Integer/pointer returns only -- an FP/SIMD result lives in v0 and a
+                              * large struct is written through the x8 indirect pointer, neither of
+                              * which is reachable. act_reg 32 (pc) is ON_RET only; act_reg 33
+                              * (pstate/eflags) is validated as a legal user state. */
+    KSU_UHOOK_FORCE_RET = 2, /* REJECTED (-EOPNOTSUPP): discarded at an entry site, and at a return
+                              * site x30 holds the trampoline address, so honouring it re-enters a
+                              * freed return_instance and ends in SIGILL. Use SETREG of index 0 at
+                              * ON_RET, or a KSU_IOCTL_PTCTL POKE, to neuter a routine. */
+    KSU_UHOOK_JUMP      = 3, /* pc = act_val (detour) -- ON_RET only */
+    KSU_UHOOK_SKIP      = 4, /* pc += act_val -- ON_RET only */
+    KSU_UHOOK_POKE      = 5, /* write the ADD-supplied bytes to *(regs[act_reg]) + act_off */
+};
+
+enum ksu_uhook_cond {
+    KSU_UHOOK_COND_NONE = 0, /* always fire */
+    KSU_UHOOK_COND_REG  = 1, /* fire iff regs[cond_reg] <cmp> cond_val */
+    KSU_UHOOK_COND_MEM  = 2, /* fire iff the cond_len-byte value at regs[cond_reg]+cond_off <cmp> cond_val */
+};
+
+enum ksu_uhook_cmp {
+    KSU_UHOOK_EQ  = 0,
+    KSU_UHOOK_NE  = 1,
+    KSU_UHOOK_LT  = 2, /* unsigned */
+    KSU_UHOOK_GT  = 3, /* unsigned */
+    KSU_UHOOK_AND = 4, /* (value & cond_val) != 0 */
+    KSU_UHOOK_SLT = 5, /* signed, for a register holding a negative value */
+    KSU_UHOOK_SGT = 6, /* signed */
+};
+
+struct ksu_uhook_cmd {
+    __u32 op;              /* Input: enum ksu_uhook_op */
+    __u32 id;              /* Input: hook id (DEL); ADD returns the id via ret */
+    /* --- where --- */
+    __aligned_u64 path;    /* Input(ADD): user ptr to a NUL-terminated file path. Resolved to the
+                           * REAL inode, so a path on an overlayfs mount works and refers to the
+                           * lower file. Must be a regular file. */
+    __aligned_u64 offset;  /* Input(ADD): FILE offset of the probed instruction -- not an ELF vaddr
+                           * and not a runtime address. Must be 4-byte aligned on arm64. For a
+                           * library mapped straight out of an uncompressed APK, use the APK path
+                           * and the offset of the instruction within the APK. For KSU_UHOOK_ON_RET
+                           * it must be the function's FIRST instruction: arm64 installs the return
+                           * probe by hijacking x30, so a mid-function offset hijacks whatever LR
+                           * happens to hold. */
+    __u32 site;            /* Input(ADD): enum ksu_uhook_site */
+    __s32 filter_tgid;     /* Input(ADD): restrict the hook to this process (a pid or tid; the whole
+                           * thread group is used). 0 = every process that maps the file, which also
+                           * means zygote, system_server and anything watching for instrumentation.
+                           * Prefer a non-zero value: it keeps the breakpoint out of other address
+                           * spaces entirely, not just the action. */
+    __s32 __pad0;          /* reserved, must be 0 */
+    /* --- when --- */
+    __u32 cond;            /* Input(ADD): enum ksu_uhook_cond */
+    __u32 cond_reg;        /* Input(ADD): register index used by the condition */
+    __u32 cond_cmp;        /* Input(ADD): enum ksu_uhook_cmp */
+    __u32 cond_len;        /* Input(ADD): mem condition width: 1/2/4/8 */
+    __aligned_s64 cond_off; /* Input(ADD): mem condition byte offset from *cond_reg */
+    __aligned_u64 cond_val; /* Input(ADD): value to compare against */
+    /* --- what --- */
+    __u32 action;          /* Input(ADD): enum ksu_uhook_action */
+    __u32 act_reg;         /* Input(ADD): SETREG/POKE register index */
+    __aligned_s64 act_off; /* Input(ADD): POKE byte offset from *act_reg */
+    __aligned_u64 act_val; /* Input(ADD): SETREG value / JUMP addr / SKIP byte count */
+    /* --- capture / IO --- */
+    __aligned_u64 uptr;    /* Input(ADD POKE): bytes to write; Output(READ): packed records */
+    __aligned_u64 len;     /* Input: uptr byte length */
+    __u32 cap_regs;        /* Input(ADD OBSERVE): number of leading registers to record; 0 = all 34 */
+    __aligned_s64 ret;     /* Output: op result (ADD: hook id; READ: bytes; LIST: count) */
+    __aligned_u64 arg1;    /* Output: op-specific (READ: number of records) */
+    __aligned_u64 lost;    /* Output(READ): cumulative records dropped on ring overrun */
+};
+
+/* One capture record produced by KSU_UHOOK_OBSERVE and read back by KSU_UHOOK_READ. */
+struct ksu_uhook_record {
+    __u32 id;             /* hook id that fired */
+    __s32 tid;            /* thread id that hit the probe */
+    __u64 ts_ns;          /* monotonic timestamp */
+    __u64 regs[34];       /* x0..x30, sp, pc, pstate (first cap_regs are meaningful) */
+};
+
+#define KSU_IOCTL_UHOOK _IOWR('K', 51, struct ksu_uhook_cmd)
+
+
 #endif

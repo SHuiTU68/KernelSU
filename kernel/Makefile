@@ -9,7 +9,10 @@ KDIR := $(KDIR)
 MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 # KernelSU headers: keep upstream-style includes working ("klog.h", "uapi/supercall.h")
-CFLAGS_ksu.o += -I$(MDIR)/include
+# $(MDIR) itself is needed too: unity build pulls in .c files from subdirs
+# (feature/, supercall/, ...), and those use upstream-style includes that are
+# relative to the KernelSU root, not to their own directory.
+CFLAGS_ksu.o += -I$(MDIR) -I$(MDIR)/include
 
 $(info -- KDIR: $(KDIR))
 $(info -- MDIR: $(MDIR))

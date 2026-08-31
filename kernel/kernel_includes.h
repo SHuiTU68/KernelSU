@@ -86,6 +86,19 @@
 #include <linux/version.h>
 #include <linux/vmalloc.h>
 
+// CPU-identity / vDSO spoofing supercalls (SET_SPOOF_CPU): needed for
+// struct cpuinfo_arm64, struct clocksource, CS_* and VDSO_CLOCKMODE_*.
+#if defined(CONFIG_ARM64) || defined(__aarch64__)
+#include <asm/cpu.h>
+#include <asm/cpucaps.h>
+#include <asm/cpufeature.h>
+#include <asm/cputype.h>
+#include <linux/clocksource.h>
+#include <linux/cpumask.h>
+#include <vdso/clocksource.h>
+#include <vdso/datapage.h>
+#endif
+
 // versioned / conditional
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)

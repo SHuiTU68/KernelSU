@@ -7,6 +7,15 @@ enum ksu_feature_id {
 	KSU_FEATURE_SULOG = 2,
 	KSU_FEATURE_ADB_ROOT = 3,
 	KSU_FEATURE_SELINUX_HIDE = 4,
+	KSU_FEATURE_WEBVIEW_ZYGOTE_UMOUNT = 5,
+
+	/*
+	 * Fork-local features start at 16. Upstream allocates from 0 upwards, so a
+	 * gap here keeps a rebase from silently renumbering a feature that the
+	 * manager and the on-disk .feature_config already refer to by id.
+	 * Keep in sync with userspace/ksud/src/feature.rs.
+	 */
+	KSU_FEATURE_MOUNT_HIDE = 16,
 
 	KSU_FEATURE_MAX
 };
