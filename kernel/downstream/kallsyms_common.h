@@ -113,15 +113,15 @@ static noinline __nocfi void ksu_kallsyms_lookup_size_offset(uintptr_t symaddr, 
 	goto *state;
 
 bootstrap:
-	*(void **)&fn = kallsyms_lookup_name("kallsyms_lookup_size_offset");
+	*(void **)&fn = (void *)kallsyms_lookup_name("kallsyms_lookup_size_offset");
 	if (!fn) {
 		state = &&no_fn;
 		goto *state;
 	}
 
-	state = &&steady_state;
+	state = &&fn_ok;
 
-steady_state:
+fn_ok:
 	fn(symaddr, sym_size, offset);
 	return;
 
@@ -294,22 +294,21 @@ static noinline __nocfi uintptr_t try_kallsyms_on_each_symbol(const char *name)
 	goto *state;
 
 bootstrap:
-	*(uintptr_t *)&kallsyms_on_each_symbol_fn = (uintptr_t)kallsyms_lookup_name("kallsyms_on_each_symbol");
+	*(void **)&kallsyms_on_each_symbol_fn = (void *)kallsyms_lookup_name("kallsyms_on_each_symbol");
 	if (!!kallsyms_on_each_symbol_fn) {
-		state = &&steady_state;
+		state = &&fn_ok;
 		goto *state;
 	}
 
-	state = &&failure_state;
-failure_state:
+	state = &&no_fn;
+no_fn:
 	return 0x0;
 
-steady_state:
+fn_ok:
 	;
 #else
 #define kallsyms_on_each_symbol_fn kallsyms_on_each_symbol
 #endif
-
 	struct lookup_args args;
 	args.target_name = name;
 	args.target_addr = 0x0;
