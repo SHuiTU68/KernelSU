@@ -6,10 +6,29 @@
 // for OOT builds like on ddk, just enable everything
 #ifndef CONFIG_KSU_HEURISTIC_IN_TREE_BUILD
 	#define CONFIG_KSU_LSM_SECURITY_HOOKS 1
-	#define CONFIG_KSU_HACK_ARM64_BRANCH_LINK 1
 	#define CONFIG_KSU_FEATURE_SULOG 1
 	#define CONFIG_KSU_FEATURE_ADBROOT 1
 	#define CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED 1
+
+	/*
+	 * "Inline callsite hijacking" (hook/branch_link_hook_arm64.c): scans all of
+	 * kernel text and rewrites b/bl instructions, with trampolines backed by
+	 * `brk #1` stubs (DEFINE_ASM_STUB) - so a mis-patch traps the CPU instead of
+	 * degrading gracefully. It also unhooks sys_call_table at module init and,
+	 * because it is defined here, compiles out BOTH other ksud-injection paths:
+	 *   - kprobes (hook/kp_ksud.c), and
+	 *   - the LSM security_file_permission hook (hook/lsm_hooks_list.c).
+	 *
+	 * It is meant for downstream/legacy kernels that have no usable LSM hooks.
+	 * GKI does not need it, and it is the single most invasive thing this tree
+	 * does to a running kernel. Opt in with KSU_ARM64_BRANCH_LINK=1.
+	 *
+	 * Trade-off: this is also the only sucompat backend here, so with it off the
+	 * /system/bin/su shim is inactive. Root via ksud + the manager is unaffected.
+	 */
+	#ifdef KSU_ARM64_BRANCH_LINK
+	#define CONFIG_KSU_HACK_ARM64_BRANCH_LINK 1
+	#endif
 #endif // CONFIG_KSU_HEURISTIC_IN_TREE_BUILD
 
 // for in-tree, this has to be detected

@@ -17,6 +17,18 @@ CFLAGS_ksu.o += -I$(MDIR) -I$(MDIR)/include
 $(info -- KDIR: $(KDIR))
 $(info -- MDIR: $(MDIR))
 
+# ARM64 inline callsite hijacking (rewrites b/bl insns across kernel text).
+# Only sucompat backend on this tree, but also the most invasive thing it does,
+# and it compiles out the LSM security_file_permission fallback. Meant for
+# downstream/legacy kernels; GKI does not need it. See kernel/ksu.c.
+# Enable with: make KSU_ARM64_BRANCH_LINK=1 ...
+ifeq ($(KSU_ARM64_BRANCH_LINK),1)
+CFLAGS_ksu.o += -DKSU_ARM64_BRANCH_LINK
+$(info -- KernelSU: arm64 branch-link callsite hijacking ENABLED)
+else
+$(info -- KernelSU: arm64 branch-link callsite hijacking disabled (KSU_ARM64_BRANCH_LINK=1 to enable))
+endif
+
 # compliant to last upstream kernel change as of 3497a56
 CFLAGS_ksu.o += -DKSU_VERSION=32603
 
