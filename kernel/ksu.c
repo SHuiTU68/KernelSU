@@ -77,6 +77,9 @@
 #include "downstream/kallsyms_common.h"
 #endif
 
+// map upstream (JingMatrix) symbol resolver API onto this tree's kallsyms
+#include "infra/symbol_resolver.h"
+
 #ifdef CONFIG_ARM64
 #include "downstream/arm64_branch_insn.h"
 #endif
