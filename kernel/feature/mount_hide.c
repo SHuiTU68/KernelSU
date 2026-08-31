@@ -460,7 +460,14 @@ static void ksu_unhook_one(ksu_proc_open_fn **slot, ksu_proc_open_fn *orig, cons
 
     if (!*slot || !*orig)
         return;
-    ret = ksu_write_to_readonly_slot((uintptr_t)*slot, (uintptr_t)orig);
+    /*
+     * NOTE: ksu_write_to_readonly_slot(slot_ptr, new_ptr) stores new_ptr as a
+     * VALUE. JingMatrix's ksu_patch_text(dst, src, len) took src as an ADDRESS
+     * and copied len bytes, so its "orig" argument was the pointer-to-variable.
+     * Dereference here, otherwise we store &ksu_orig_*_open (a data address)
+     * into the .open slot and the next open() of /proc/mounts jumps into data.
+     */
+    ret = ksu_write_to_readonly_slot((uintptr_t)*slot, (uintptr_t)*orig);
     if (ret)
         pr_err("mount_hide: exit: patch_text %s err: %d\n", name, ret);
     *slot = NULL;
