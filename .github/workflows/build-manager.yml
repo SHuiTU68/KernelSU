@@ -278,11 +278,34 @@ jobs:
           cp -f "$X86_64_KSUD" target/x86_64-linux-android/release/ksud
 
       - name: Prepare signing inputs
+        env:
+          PR_KEYSTORE: ${{ needs.generate-key.outputs.keystore }}
+          PR_KEYSTORE_PASSWORD: ${{ needs.generate-key.outputs.keystore_password }}
+          PR_KEY_PASSWORD: ${{ needs.generate-key.outputs.key_password }}
         run: |
-          echo "SIGN_KEYSTORE_FILE=manager/dummy.keystore" >> $GITHUB_ENV
-          echo "SIGN_KEY_ALIAS=alias" >> $GITHUB_ENV
-          echo "SIGN_KEYSTORE_PASSWORD=password" >> $GITHUB_ENV
-          echo "SIGN_KEY_PASSWORD=password" >> $GITHUB_ENV
+          # The APK that ships must be signed with the SAME key the kernel was
+          # built to trust (kernel/Makefile: KSU_EXPECTED_SIZE/HASH), not with the
+          # in-tree dummy.keystore -- that one is public, so anything signed with
+          # it would be crowned manager.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "$PR_KEYSTORE" | base64 -d > manager/pr-key.jks
+            {
+              echo "SIGN_KEYSTORE_FILE=manager/pr-key.jks"
+              echo "SIGN_KEY_ALIAS=pr-key"
+              echo "SIGN_KEYSTORE_PASSWORD=$PR_KEYSTORE_PASSWORD"
+              echo "SIGN_KEY_PASSWORD=$PR_KEY_PASSWORD"
+            } >> $GITHUB_ENV
+          else
+            # single source of truth: manager/gradle.properties (last entry wins,
+            # same rule Gradle applies to a duplicated property)
+            {
+              echo "SIGN_KEYSTORE_FILE=manager/$(sed -n 's/^KEYSTORE_FILE=//p' manager/gradle.properties | tail -1)"
+              echo "SIGN_KEY_ALIAS=$(sed -n 's/^KEY_ALIAS=//p' manager/gradle.properties | tail -1)"
+              echo "SIGN_KEYSTORE_PASSWORD=$(sed -n 's/^KEYSTORE_PASSWORD=//p' manager/gradle.properties | tail -1)"
+              echo "SIGN_KEY_PASSWORD=$(sed -n 's/^KEY_PASSWORD=//p' manager/gradle.properties | tail -1)"
+            } >> $GITHUB_ENV
+          fi
+          grep -E "^SIGN_" $GITHUB_ENV | sed 's/_PASSWORD=.*/_PASSWORD=***/'
 
       - name: Repack and resign
         run: |

@@ -362,17 +362,33 @@ bool is_manager_apk(char *path)
 	}
 #endif
 
-	// dummy.keystore
-	if (check_v2_signature(path, 0x363, "4359c171f32543394cbc23ef908c4bb94cad7c8087002ba164c8230948c21549"))
+	// this fork's own key, from KSU_EXPECTED_SIZE / KSU_EXPECTED_HASH
+	if (check_v2_signature(path, EXPECTED_SIZE, EXPECTED_HASH))
 		return true;
 
-	 // kernelsu official
-	if (check_v2_signature(path, EXPECTED_SIZE, EXPECTED_HASH))
+	// second slot: CI builds a PR kernel with that PR's throwaway key so the
+	// manager from the same PR is crowned too.
+#ifdef EXPECTED_SIZE2
+	if (check_v2_signature(path, EXPECTED_SIZE2, EXPECTED_HASH2))
+		return true;
+#endif
+
+#ifdef KSU_ALLOW_FOREIGN_MANAGER_KEYS
+	/*
+	 * Other forks' keys. Off by default on purpose: these keystores are public
+	 * (backslashxx ships dummy.keystore in-tree, alias/password are "alias" and
+	 * "password"), so compiling them in means ANY third-party APK signed with
+	 * them is crowned manager and gets root on a kernel built from this tree.
+	 * Define KSU_ALLOW_FOREIGN_MANAGER_KEYS to get the old behaviour back.
+	 */
+	// backslashxx/KernelSU (dummy.keystore)
+	if (check_v2_signature(path, 0x363, "4359c171f32543394cbc23ef908c4bb94cad7c8087002ba164c8230948c21549"))
 		return true;
 
 	// KOWX712/KernelSU
 	if (check_v2_signature(path, 0x375, "484fcba6e6c43b1fb09700633bf2fb4758f13cb0b2f4457b80d075084b26c588"))
 		return true;
+#endif
 
 	return false;
 }

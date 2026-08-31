@@ -39,6 +39,22 @@ $(info -- KernelSU Manager signature hash: $(KSU_EXPECTED_HASH))
 CFLAGS_ksu.o += -DEXPECTED_SIZE=$(KSU_EXPECTED_SIZE)
 CFLAGS_ksu.o += -DEXPECTED_HASH=\"$(KSU_EXPECTED_HASH)\"
 
+# Optional second certificate slot. CI sets this so a PR kernel also accepts the
+# throwaway key that PR's manager was signed with. Both halves or neither.
+ifdef KSU_EXPECTED_SIZE2
+ifndef KSU_EXPECTED_HASH2
+$(error KSU_EXPECTED_SIZE2 was given without KSU_EXPECTED_HASH2)
+endif
+$(info -- KernelSU Manager signature size2: $(KSU_EXPECTED_SIZE2))
+$(info -- KernelSU Manager signature hash2: $(KSU_EXPECTED_HASH2))
+CFLAGS_ksu.o += -DEXPECTED_SIZE2=$(KSU_EXPECTED_SIZE2)
+CFLAGS_ksu.o += -DEXPECTED_HASH2=\"$(KSU_EXPECTED_HASH2)\"
+else
+ifdef KSU_EXPECTED_HASH2
+$(error KSU_EXPECTED_HASH2 was given without KSU_EXPECTED_SIZE2)
+endif
+endif
+
 # uncommon, but wont hurt, check for 3-arg security_add_hooks
 ifeq ($(shell grep -A1 "void security_add_hooks" $(srctree)/include/linux/lsm_hooks.h 2>/dev/null | grep -q lsm 2>/dev/null; echo $$?),0)
 $(info -- KernelSU/compat: security_add_hooks v2 found!)
