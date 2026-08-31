@@ -17,15 +17,10 @@ jobs:
   build-lkm:
     strategy:
       matrix:
+        # This fork only ships the arm64 android15-6.6 LKM. Add a KMI back here
+        # to build more -- each entry is one DDK container build.
         kmi:
-          - android12-5.10
-          - android13-5.10
-          - android13-5.15
-          - android14-5.15
-          - android14-6.1
           - android15-6.6
-          - android16-6.12
-          - android17-6.18
     uses: ./.github/workflows/ddk-lkm.yml
     with:
       kmi: ${{ matrix.kmi }}
